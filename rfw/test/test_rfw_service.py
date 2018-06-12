@@ -7,11 +7,11 @@ class CmdParseTest(TestCase):
 
     def test_parse_command(self):
         self.assertEqual( 
-                cmdparse.parse_command_path('/drop/input/eth0/5.6.7.8'), 
+                cmdparse.parse_command_path('/drop/input/',
+                                            """{ "target": "DROP", "inp": "eth0", 
+                                            "source": "5.6.7.8",
+                                            "destination": "0.0.0.0/0"}"""), 
                     ('drop', Rule(chain='INPUT', num=None, pkts=None, bytes=None, target='DROP', prot='all', opt='--', inp='eth0', out='*', source='5.6.7.8', destination='0.0.0.0/0', extra='')))
-        self.assertEqual( 
-                cmdparse.parse_command_path('/drop/input/eth /5.6.7.8/'), 
-                    ('drop', Rule(chain='INPUT', num=None, pkts=None, bytes=None, target='DROP', prot='all', opt='--', inp='eth+', out='*', source='5.6.7.8', destination='0.0.0.0/0', extra='')))
 
 
 
