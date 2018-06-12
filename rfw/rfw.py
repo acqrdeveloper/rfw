@@ -80,13 +80,13 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
             raise Exception(msg)
 
 
-    def process(handler, modify, urlpath):
+    def process(handler, modify, urlpath, body):
         # modify should be 'D' for Delete or 'I' for Insert understood as -D and -I iptables flags
         assert modify in ['D', 'I', 'L']
         log.debug('process {} urlpath: {}'.format(modify, urlpath))
       
         try:
-            action, rule, directives = cmdparse.parse_command(urlpath)
+            action, rule, directives = cmdparse.parse_command(urlpath, body)
             log.debug('\nAction: {}\nRule: {}\nDirectives: {}'.format(action, rule, directives))
             if modify == 'L':
                 if action == 'help':
@@ -136,17 +136,19 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
         def version_string(self):
             return server_ver
 
-        def go(self, modify, urlpath, remote_addr):
-            process(self, modify, urlpath)
+        def go(self, modify, urlpath, remote_addr, body):
+            process(self, modify, urlpath, body)
 
         def do_modify(self, modify):
             self.go(modify, self.path, self.client_address[0])
 
         def do_PUT(self):
-            self.go('I', self.path, self.client_address[0])
+            self.body = self.rfile.read(int(self.headers['Content-Length']))
+            self.go('I', self.path, self.client_address[0], self.body)
     
         def do_DELETE(self):
-            self.go('D', self.path, self.client_address[0])
+            self.body = self.rfile.read(int(self.headers['Content-Length']))
+            self.go('D', self.path, self.client_address[0], self.body)
     
         def do_GET(self):
             self.go('L', self.path, self.client_address[0])
@@ -161,19 +163,21 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
         def creds_check(self, user, password):
             return user == rfwconf.auth_username() and password == rfwconf.auth_password()
 
-        def go(self, modify, urlpath, remote_addr):
+        def go(self, modify, urlpath, remote_addr, body):
             # authenticate by checking if client IP is in the whitelist - normally reqests from non-whitelisted IPs should be blocked by firewall beforehand
             if not iputil.ip_in_list(remote_addr, rfwconf.whitelist()):
                 log.error('Request from client IP: {} which is not authorized in the whitelist. It should have been blocked by firewall.'.format(remote_addr))
                 return self.http_resp(403, '') # Forbidden 
 
-            process(self, modify, urlpath)
+            process(self, modify, urlpath, body)
 
         def do_PUT(self):
-            self.go('I', self.path, self.client_address[0])
+            self.body = self.rfile.read(int(self.headers['Content-Length']))
+            self.go('I', self.path, self.client_address[0], self.body)
     
         def do_DELETE(self):
-            self.go('D', self.path, self.client_address[0])
+            self.body = self.rfile.read(int(self.headers['Content-Length']))
+            self.go('D', self.path, self.client_address[0], self.body)
     
         def do_GET(self):
             self.go('L', self.path, self.client_address[0])

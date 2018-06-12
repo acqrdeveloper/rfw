@@ -41,12 +41,41 @@ log.addHandler(logging.NullHandler())
 # note that the 'in' attribute from iptables output was renamed to 'inp' to avoid python keyword clash
 IPTABLES_HEADERS =         ['num', 'pkts', 'bytes', 'target', 'prot', 'opt', 'in', 'out', 'source', 'destination'] 
 RULE_ATTRS =      ['chain', 'num', 'pkts', 'bytes', 'target', 'prot', 'opt', 'inp', 'out', 'source', 'destination', 'extra']
-RULE_TARGETS =      ['DROP', 'ACCEPT', 'REJECT']
-RULE_CHAINS =       ['INPUT', 'OUTPUT', 'FORWARD']
+RULE_TARGETS =      set(['DROP', 'ACCEPT', 'REJECT', 'RETURN'])
+RULE_CHAINS =       set(['INPUT', 'OUTPUT', 'FORWARD'])
 
+ChainProto = namedtuple('Chain', ['name', 'rule'])
+class Chain(ChainProto):
+    """Immutable value object to store iptables chain
+    """
+    def __new__(cls, name, proto, dport):
+        r = Rule(chain='INPUT', target=self.name, prot=proto, extra='dpt: {}'.format(dport))
+        return ChainProto.__new__(cls, name, r)
+
+    def __eq__(self, other):
+        """Chain equality is just on the basis of names
+        """
+        if isinstance(other, self.__class__):
+            return self.name == other.name
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def create(self, proto, dport):
+        if self.name not in RULE_CHAINS:
+            Iptables.exe(['-N', self.name])
+            Iptables.exe(['-A', self.name, '-j', 'RETURN'])
+            Iptables.exe_rule('I', self.rule)
+            RULE_CHAINS.add(self.name.upper())
+
+    def delete(self):
+        if self.name.upper() in RULE_CHAINS:
+            Iptables.exe_rule('D', self.rule)
+            RULE_CHAINS.discard(self.name)
 
 RuleProto = namedtuple('Rule', RULE_ATTRS)
-
 class Rule(RuleProto):
     """Lightweight immutable value object to store iptables rule
     """
@@ -177,7 +206,7 @@ class Iptables:
         #TODO handle extras e.g. 'extra': 'tcp dpt:7373 spt:34543'
         #TODO add validations
         #TODO handle wildcards
-        assert r.chain == 'INPUT' or r.chain == 'OUTPUT' or r.chain == 'FORWARD'
+        assert r.chain in RULE_CHAINS
         lcmd = []
         lcmd.append(r.chain)
         if r.prot != 'all':
