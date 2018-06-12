@@ -151,7 +151,7 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
             self.go('D', self.path, self.client_address[0], self.body)
     
         def do_GET(self):
-            self.go('L', self.path, self.client_address[0])
+            self.go('L', self.path, self.client_address[0], False)
     
    
 
@@ -180,7 +180,7 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
             self.go('D', self.path, self.client_address[0], self.body)
     
         def do_GET(self):
-            self.go('L', self.path, self.client_address[0])
+            self.go('L', self.path, self.client_address[0], False)
     
    
     return LocalRequestHandler, OutwardRequestHandler

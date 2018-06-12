@@ -3,6 +3,9 @@ dist
 *.egg-info
 *.log
 config/temp.conf
+config/rfw.conf
+config/white.list
+*.pem
 config/deploy/client
 config/deploy/offline
 config/deploy/server_*
