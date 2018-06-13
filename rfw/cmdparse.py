@@ -30,7 +30,7 @@
 
 import sys, logging, urlparse, re, json
 import iputil, timeutil, iptables
-from iptables import Rule
+from iptables import Rule, Chain
 
 log = logging.getLogger("rfw.cmdparse")
 
@@ -78,24 +78,23 @@ def parse_command_path(path, body):
         return 'help', None
 
     action = p[0]
-   
-    if action.upper() in iptables.RULE_TARGETS:
-        try:
-            return action, build_rule(p[1].upper(), body)
-        except ValueError, e:
-            raise PathError(path, e.message)
-        except IndexError:
-            raise PathError(path, "Missing chain")
+
+    try:
+        if action.upper() in iptables.RULE_TARGETS:
+            return action, build_rule(p[1], body)
+        elif action.upper() == 'CHAIN':
+            return action, build_chain(p[1], body)
+    except ValueError, e:
+        raise PathError(path, e.message)
+    except IndexError:
+        raise PathError(path, "Missing chain")
     
     if action == 'list':
         if len(p) == 1:
             return action, None
         elif len(p) == 2:
-            chain = p[1].upper()
-            if chain in iptables.RULE_CHAINS:
-                return action, chain
-            else:
-                raise PathError(path, 'Wrong chain name for list command')
+            chain = p[1]
+            return action, chain
         else:
             raise PathError(path, 'Too many details for the list command')
         
@@ -111,6 +110,8 @@ def build_rule(chain, params):
     return Rule(p)
 
 
+def build_chain(chain, params):
+    return Chain(chain)
 
 def parse_command_query(query):
     params = dict(urlparse.parse_qsl(query))

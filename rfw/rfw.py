@@ -44,7 +44,7 @@ from Queue import Queue, PriorityQueue
 from threading import Thread
 import config, rfwconfig, cmdparse, iputil, rfwthreads, iptables
 from sslserver import SSLServer, PlainServer, BasicAuthRequestHandler, CommonRequestHandler
-from iptables import Iptables
+from iptables import Iptables, State
 
    
 log = logging.getLogger('rfw')
@@ -53,7 +53,7 @@ def perr(msg):
     print(msg, file=sys.stderr)
 
 
-def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
+def create_requesthandlers(rfwconf, cmd_queue, expiry_queue, state):
     """Create RequestHandler type. This is a way to avoid global variables: a closure returning a class type that binds rfwconf and cmd_queue inside. 
     """
 
@@ -86,18 +86,23 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
         log.debug('process {} urlpath: {}'.format(modify, urlpath))
       
         try:
-            action, rule, directives = cmdparse.parse_command(urlpath, body)
-            log.debug('\nAction: {}\nRule: {}\nDirectives: {}'.format(action, rule, directives))
+            action, obj, directives = cmdparse.parse_command(urlpath, body)
+            log.debug('\nAction: {}\nObj: {}\nDirectives: {}'.format(action, obj, directives))
             if modify == 'L':
                 if action == 'help':
                     resp = 'TODO usage'
                     return handler.http_resp(200, resp)
-                elif action == 'list':
-                    chain = rule
-                    rules = Iptables.read_simple_rules(chain)
-                    log.debug('List rfw rules: %s', rules) 
-                    list_of_dict = map(iptables.Rule._asdict, rules)                    
-                    resp = json.dumps(list_of_dict)
+                elif action.upper() == 'LIST':
+                    chain = obj
+                    output = ''
+                    if chain:
+                        rules = state.rule_chain(chain)
+                        log.debug('Listing rules of {}'.format(chain))
+                        output = map(iptables.Rule._asdict, rules)                    
+                    else:
+                        log.debug('Listing known chains')
+                        output = state.chains()
+                    resp = json.dumps(output)
                     return handler.http_resp(200, resp)
                 elif rfwconf.is_non_restful():
                     mod = directives.get('modify')
@@ -112,16 +117,22 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
                 else:
                     raise Exception('Unrecognized command. Non-restful disabled.')
 
-            if modify in ['D', 'I'] and action.upper() in iptables.RULE_TARGETS:
-                # eliminate ignored/whitelisted IP related commands early to prevent propagating them to expiry queue
-                check_whitelist_conflict(rule.source, rfwconf.whitelist())
-                check_whitelist_conflict(rule.destination, rfwconf.whitelist())
-                ctup = (modify, rule, directives)
-                log.debug('PUT to Cmd Queue. Tuple: {}'.format(ctup))
-                cmd_queue.put_nowait(ctup)
+            if modify in ['D', 'I']:
+                if action.upper() in iptables.RULE_TARGETS:
+                    # eliminate ignored/whitelisted IP related commands early to prevent propagating them to expiry queue
+                    check_whitelist_conflict(rule.source, rfwconf.whitelist())
+                    check_whitelist_conflict(rule.destination, rfwconf.whitelist())
+                    log.debug('Added rule to Cmd Queue. Tuple: {}'.format(ctup))
+                    ctup = (modify, obj, directives)
+                    cmd_queue.put_nowait(ctup)
+                elif action.upper() == 'CHAIN':
+                    ctup = (modify, obj, directives)
+                    cmd_queue.put_nowait(ctup)
+                    log.debug('Added chain to Cmd Queue, Tuple: {}'.format(ctup))
                 return handler.http_resp(200, ctup)
             else:
                 raise Exception('Unrecognized command.')
+             
         except Exception, e:
             msg = 'ERROR: {}'.format(e.message)
             # logging as error disabled - bad client request is not an error 
@@ -143,11 +154,11 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
             self.go(modify, self.path, self.client_address[0])
 
         def do_PUT(self):
-            self.body = self.rfile.read(int(self.headers['Content-Length']))
+            self.body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
             self.go('I', self.path, self.client_address[0], self.body)
     
         def do_DELETE(self):
-            self.body = self.rfile.read(int(self.headers['Content-Length']))
+            self.body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
             self.go('D', self.path, self.client_address[0], self.body)
     
         def do_GET(self):
@@ -172,11 +183,11 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue):
             process(self, modify, urlpath, body)
 
         def do_PUT(self):
-            self.body = self.rfile.read(int(self.headers['Content-Length']))
+            self.body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
             self.go('I', self.path, self.client_address[0], self.body)
     
         def do_DELETE(self):
-            self.body = self.rfile.read(int(self.headers['Content-Length']))
+            self.body = self.rfile.read(int(self.headers.get('Content-Length', 0)))
             self.go('D', self.path, self.client_address[0], self.body)
     
         def do_GET(self):
@@ -230,7 +241,7 @@ def stop():
     sys.exit(1)
 
 
-def rfw_init_rules(rfwconf):
+def rfw_init_rules(rfwconf, state):
     """Clean and insert the rfw init rules.
     The rules block all INPUT/OUTPUT traffic on rfw ssl port except for whitelisted IPs.
     Here are the rules that should be created assuming that that the only whitelisted IP is 127.0.0.1:
@@ -240,17 +251,16 @@ def rfw_init_rules(rfwconf):
         Rule(chain='OUTPUT', num='4', pkts='0', bytes='0', target='DROP', prot='tcp', opt='--', inp='*', out='*', source='0.0.0.0/0', destination='0.0.0.0/0', extra='tcp spt:7393')
     """
     rfw_port = rfwconf.outward_server_port()
-    ipt = Iptables.load()
 
     ###
     log.info('Delete existing init rules')
     # find 'drop all packets to and from rfw port'
-    drop_input = ipt.find({'target': ['DROP'], 'chain': ['INPUT'], 'prot': ['tcp'], 'extra': ['tcp dpt:' + rfw_port]})
+    drop_input = state.find({'target': ['DROP'], 'chain': ['INPUT'], 'prot': ['tcp'], 'extra': ['tcp dpt:' + rfw_port]})
     log.info(drop_input)
     log.info('Existing drop input to rfw port {} rules:\n{}'.format(rfw_port, '\n'.join(map(str, drop_input))))
     for r in drop_input:
         Iptables.exe_rule('D', r)
-    drop_output = ipt.find({'target': ['DROP'], 'chain': ['OUTPUT'], 'prot': ['tcp'], 'extra': ['tcp spt:' + rfw_port]})
+    drop_output = state.find({'target': ['DROP'], 'chain': ['OUTPUT'], 'prot': ['tcp'], 'extra': ['tcp spt:' + rfw_port]})
     log.info('Existing drop output to rfw port {} rules:\n{}'.format(rfw_port, '\n'.join(map(str, drop_output))))
     for r in drop_output:
         Iptables.exe_rule('D', r)
@@ -303,9 +313,8 @@ def main():
     signal.signal(signal.SIGINT, __sigTERMhandler)
     # TODO we may also need to ignore signal.SIGHUP in daemon mode
     
-
-
-    rules = Iptables.load().rules
+    state = State(Iptables.load())
+    rules = state.all_rules()
     # TODO make logging more efficient by deferring arguments evaluation
     log.debug("===== rules =====\n{}".format("\n".join(map(str, rules))))
 
@@ -315,21 +324,22 @@ def main():
         log.info('    {}'.format(a))
 
     # recreate rfw init rules related to rfw port
-    rfw_init_rules(rfwconf)
+    rfw_init_rules(rfwconf, state)
 
     expiry_queue = PriorityQueue()
     cmd_queue = Queue()
 
     rfwthreads.CommandProcessor(cmd_queue, 
-                            rfwconf.whitelist(),
-                            expiry_queue,
-                            rfwconf.default_expire()).start()
+                                rfwconf.whitelist(),
+                                expiry_queue,
+                                rfwconf.default_expire(),
+                                state).start()
 
     rfwthreads.ExpiryManager(cmd_queue, expiry_queue).start()
 
     # Passing HandlerClass to SSLServer is very limiting, seems like a bad design of BaseServer. 
     # In order to pass extra info to RequestHandler without using global variable we have to wrap the class in closure.
-    LocalHandlerClass, OutwardHandlerClass = create_requesthandlers(rfwconf, cmd_queue, expiry_queue)
+    LocalHandlerClass, OutwardHandlerClass = create_requesthandlers(rfwconf, cmd_queue, expiry_queue, state)
     if rfwconf.is_outward_server():
         server_address = (rfwconf.outward_server_ip(), int(rfwconf.outward_server_port()))
         httpd = SSLServer(

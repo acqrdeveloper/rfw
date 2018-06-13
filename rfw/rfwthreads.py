@@ -32,14 +32,13 @@ from __future__ import print_function
 from threading import Thread
 import time, logging
 import iputil, iptables
-from iptables import Iptables
 
 log = logging.getLogger('rfw.rfwthreads')
 
 
 class CommandProcessor(Thread):
 
-    def __init__(self, cmd_queue, whitelist, expiry_queue, default_expire):
+    def __init__(self, cmd_queue, whitelist, expiry_queue, default_expire, state):
         Thread.__init__(self)
         self.cmd_queue = cmd_queue
         self.whitelist = whitelist
@@ -61,29 +60,33 @@ class CommandProcessor(Thread):
 
 
     def run(self):
-        ruleset = set(Iptables.read_simple_rules())
         while True:
-            modify, rule, directives = self.cmd_queue.get()
+            modify, obj, directives = self.cmd_queue.get()
+            if isinstance(obj, iptables.Chain):
+                objset = state.chains()
+            elif isinstance(obj, iptables.Rule):
+                objset = state.rule_chain(obj.chain)
+            else:
+                raise Exception("Do not know what to do with object {}".format(obj))
+
             try:
-                rule_exists = rule in ruleset
-                log.debug('{} rule_exists: {}'.format(rule, rule_exists))
+                obj_exists = obj in objset
+                log.debug('{} obj_exists: {}'.format(obj, obj_exists))
  
                 # check for duplicates, apply rule
                 if modify == 'I':
-                    if rule_exists:
-                        log.warn("Trying to insert existing rule: {}. Command ignored.".format(rule))
+                    if obj_exists:
+                        log.warn("Trying to insert an existing object: {}. Command ignored.".format(obj))
                     else:
-                        Iptables.exe_rule(modify, rule)
+                        obj.create(state)
                         # schedule expiry timeout if present. Only for Insert rules and only if the rule didn't exist before (so it was added now)
-                        self.schedule_expiry(rule, directives)
-                        ruleset.add(rule)
+                        self.schedule_expiry(obj, directives)
                 elif modify == 'D':
-                    if rule_exists:
+                    if obj_exists:
                         #TODO delete rules in the loop to delete actual iptables duplicates. It's to satisfy idempotency and plays well with common sense
-                        Iptables.exe_rule(modify, rule)
-                        ruleset.discard(rule)
+                        obj.delete(state)
                     else:
-                        log.warn("Trying to delete not existing rule: {}. Command ignored.".format(rule))
+                        log.warn("Trying to delete non-existent object: {}. Command ignored.".format(obj))
                 elif modify == 'L':
                     #TODO rereading the iptables?
                     pass

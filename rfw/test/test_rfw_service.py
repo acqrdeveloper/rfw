@@ -11,7 +11,7 @@ class CmdParseTest(TestCase):
                                             """{ "target": "DROP", "inp": "eth0", 
                                             "source": "5.6.7.8",
                                             "destination": "0.0.0.0/0"}"""), 
-                    ('drop', Rule(chain='INPUT', num=None, pkts=None, bytes=None, target='DROP', prot='all', opt='--', inp='eth0', out='*', source='5.6.7.8', destination='0.0.0.0/0', extra='')))
+                    ('drop', Rule(chain='input', num=None, pkts=None, bytes=None, target='DROP', prot='all', opt='--', inp='eth0', out='*', source='5.6.7.8', destination='0.0.0.0/0', extra='')))
 
 
 
@@ -53,28 +53,26 @@ class TimeUtilTest(TestCase):
         self.assertEqual( timeutil.parse_interval(''), None )
 
 
-class IptablesTest(TestCase):
-
-    # this function must be called 'load' to be able to instantiate mock Iptables
-    def load(self, rules):
-        inst = iptables.Iptables(rules)
-        return inst
+class StateTest(TestCase):
 
     def test_find(self):
         r1 = Rule(chain='INPUT', num='9', pkts='0', bytes='0', target='DROP', prot='all', opt='--', inp='eth+', out='*', source='2.2.2.2', destination='0.0.0.0/0', extra='')
         r2 = Rule(chain='INPUT', num='10', pkts='0', bytes='0', target='ACCEPT', prot='tcp', opt='--', inp='*', out='*', source='3.4.5.6', destination='0.0.0.0/0', extra='tcp spt:12345')
         r3 = Rule(chain='INPUT', num='1', pkts='14', bytes='840', target='DROP', prot='tcp', opt='--', inp='*', out='*', source='0.0.0.0/0', destination='0.0.0.0/0', extra='tcp dpt:7393')
         r4 = Rule(chain='OUTPUT', num='1', pkts='0', bytes='0', target='DROP', prot='all', opt='--', inp='*', out='tun+', source='0.0.0.0/0', destination='7.7.7.6', extra='')
-        rules = [r1, r2, r3, r4]
-        inst1 = self.load(rules)
+        rules = set([r1, r2, r3, r4])
+        d = {}
+        for r in rules:
+            d.setdefault(r.chain, set()).add(r)
+        inst1 = iptables.State(d)
         self.assertEqual( inst1.find({}), rules)
-        self.assertEqual( inst1.find({'destination': ['0.0.0.0/0']}), [r1, r2, r3])
-        self.assertEqual( inst1.find({'target': ['ACCEPT']}), [r2])
-        self.assertEqual( inst1.find({'chain': ['OUTPUT']}), [r4])
-        self.assertEqual( inst1.find({'chain': ['OUTPUT'], 'target':['ACCEPT']}), [])
-        self.assertEqual( inst1.find({'chain': ['OUTPUT', 'INPUT'], 'target':['ACCEPT']}), [r2])
+        self.assertEqual( inst1.find({'destination': ['0.0.0.0/0']}), set([r1, r2, r3]))
+        self.assertEqual( inst1.find({'target': ['ACCEPT']}), set([r2]))
+        self.assertEqual( inst1.find({'chain': ['OUTPUT']}), set([r4]))
+        self.assertEqual( inst1.find({'chain': ['OUTPUT'], 'target':['ACCEPT']}), set())
+        self.assertEqual( inst1.find({'chain': ['OUTPUT', 'INPUT'], 'target':['ACCEPT']}), set([r2]))
         self.assertEqual( inst1.find({'chain': ['OUTPUT', 'INPUT'], 'target':['ACCEPT', 'DROP']}), rules)
-        self.assertEqual( inst1.find({'chain': ['OUTPUT', 'INPUT'], 'target':['DROP'], 'extra': ['']}), [r1, r4])
+        self.assertEqual( inst1.find({'chain': ['OUTPUT', 'INPUT'], 'target':['DROP'], 'extra': ['']}), set([r1, r4]))
         
     def test_create_rule(self):
         """Test creating Rule objects in various ways

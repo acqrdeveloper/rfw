@@ -28,7 +28,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import inspect, re, subprocess, logging, json
+import inspect, re, subprocess, logging, json, operator
 from collections import namedtuple
 from threading import RLock
 
@@ -42,15 +42,69 @@ log.addHandler(logging.NullHandler())
 IPTABLES_HEADERS =         ['num', 'pkts', 'bytes', 'target', 'prot', 'opt', 'in', 'out', 'source', 'destination'] 
 RULE_ATTRS =      ['chain', 'num', 'pkts', 'bytes', 'target', 'prot', 'opt', 'inp', 'out', 'source', 'destination', 'extra']
 RULE_TARGETS =      set(['DROP', 'ACCEPT', 'REJECT', 'RETURN'])
-RULE_CHAINS =       set(['INPUT', 'OUTPUT', 'FORWARD'])
 
-ChainProto = namedtuple('Chain', ['name', 'rule'])
+class State:
+
+    rules = {}
+    
+    def __init__(self, rules):
+        self.rules = rules
+        
+    def chains(self):
+        return self.rules.keys()
+
+    def rule_chain(self, chain):
+        return self.rules.get(chain)
+
+    def remove_chain(self, chain):
+        assert chain in chains()
+        del self.rules[chain]
+
+    def remove_rule(self, chain, rule):
+        assert chain in chains()
+        assert rule in rules.get(chain)
+
+        del self.rules[chain][rule]
+
+    def add_chain(self, chain):
+        self.rules.setdefault(chain, set())
+
+    def add_rule(self, chain, rule):
+        self.rules.get(chain).add(rule)
+
+    def all_rules(self):
+        s = set()
+        for i in self.rules.values():
+            s |= i
+
+        return s
+
+    def find(self, query):
+        """Find rules based on query
+        For example:
+            query = {'chain': ['INPUT', 'OUTPUT'], 'prot': ['all'], 'extra': ['']}
+            is searching for the rules where:
+            (chain == INPUT or chain == OUTPUT) and prot == all and extra == ''
+        """
+        ret = set()
+        for r in self.all_rules():
+            matched_all = True    # be optimistic, if inner loop does not break, it means we matched all clauses
+            for param, vals in query.items():
+                rule_val = getattr(r, param)
+                if rule_val not in vals:
+                    matched_all = False
+                    break
+            if matched_all:
+                ret.add(r)
+        return ret
+
+
+ChainProto = namedtuple('Chain', ['name'])
 class Chain(ChainProto):
-    """Immutable value object to store iptables chain
+    """Value object to store iptables chain
     """
-    def __new__(cls, name, proto, dport):
-        r = Rule(chain='INPUT', target=self.name, prot=proto, extra='dpt: {}'.format(dport))
-        return ChainProto.__new__(cls, name, r)
+    def __init__(self, name):
+        self.name = name
 
     def __eq__(self, other):
         """Chain equality is just on the basis of names
@@ -63,17 +117,15 @@ class Chain(ChainProto):
     def __ne__(self, other):
         return not self.__eq__(other)
 
-    def create(self, proto, dport):
-        if self.name not in RULE_CHAINS:
-            Iptables.exe(['-N', self.name])
-            Iptables.exe(['-A', self.name, '-j', 'RETURN'])
-            Iptables.exe_rule('I', self.rule)
-            RULE_CHAINS.add(self.name.upper())
+    def create(self, state):
+        Iptables.exe(['-N', self.name])
+        state.add_chain(self.name)
 
-    def delete(self):
-        if self.name.upper() in RULE_CHAINS:
-            Iptables.exe_rule('D', self.rule)
-            RULE_CHAINS.discard(self.name)
+    def delete(self, state):
+        Iptables.exe(['-F', self.name])
+        Iptables.exe(['-X', self.name])
+        state.remove_chain(self.name)
+        
 
 RuleProto = namedtuple('Rule', RULE_ATTRS)
 class Rule(RuleProto):
@@ -89,6 +141,7 @@ class Rule(RuleProto):
             if isinstance(props, list):
                 return RuleProto.__new__(_cls, *props)
             elif isinstance(props, dict):
+                # These defaults should agree with RULE_ATTRS above
                 d = {'chain': None, 'num': None, 'pkts': None, 'bytes': None, 'target': None, 'prot': 'all', 'opt': '--', 'inp': '*', 'out': '*', 'source': '0.0.0.0/0', 'destination': '0.0.0.0/0', 'extra': ''}
                 d.update(props)
                 return RuleProto.__new__(_cls, **d)
@@ -111,7 +164,13 @@ class Rule(RuleProto):
     def __ne__(self, other):
         return not self.__eq__(other)
 
+    def create(self, state):
+        Iptables.exe_rule('I', self)
+        state.add_rule(rule.chain, rule)
 
+    def delete(self, state):
+        Iptables.exe_rule('D', self)
+        state.remove_rule(rule.chain, rule)
 
 
 class Iptables:
@@ -121,20 +180,6 @@ class Iptables:
     lock = RLock()
     # store ipt_path as class variable, it's a system wide singleton anyway
     ipt_path = 'iptables'
-
-    def __init__(self, rules):
-        # check the caller function name - the poor man's private constructor
-        if inspect.stack()[1][3] == 'load':
-            # after this initialization self.rules should be read-only
-            self.rules = rules
-        else:
-            raise Exception("Use Iptables.load() to create an instance with loaded current list of rules")
-
-    @staticmethod
-    def load():
-        rules = Iptables._iptables_list()
-        inst = Iptables(rules)
-        return inst
 
     @staticmethod
     def verify_install():
@@ -162,13 +207,12 @@ class Iptables:
         pass
 
     @staticmethod
-    def _iptables_list():
-        """List and parse iptables rules. Do not call directly. Use Iptables.load().rules instead
-        return list of rules of type Rule.
+    def load():
+        """Parse iptables rules from iptables command output
         """
-        rules = []
         out = Iptables.exe(['-n', '-L', '-v', '-x', '--line-numbers'])
         #out = subprocess.check_output([Iptables.ipt_path, '-n', '-L', '-v', '-x', '--line-numbers'], stderr=subprocess.STDOUT)
+        rules = {}
         chain = None
         header = None
         for line in out.split('\n'):
@@ -176,8 +220,8 @@ class Iptables:
             if not line:
                 chain = None  #on blank line reset current chain
                 continue
-            m = re.match(r"Chain (\w+) .*", line)
-            if m and m.group(1) in RULE_CHAINS:
+            m = re.match(r"Chain (\S+) .*", line)
+            if m:
                 chain = m.group(1)
                 continue
             if "source" in line and "destination" in line:
@@ -193,10 +237,9 @@ class Iptables:
                     columns.append(extra)
                     columns.insert(0, chain)
                     rule = Rule(columns)
-                    rules.append(rule)
+                    rules.setdefault(chain, set()).add(rule)
         return rules
-    
-   
+        
     @staticmethod
     def rule_to_command(r):
         """Convert Rule object r to the list representing iptables command arguments like: 
@@ -206,7 +249,6 @@ class Iptables:
         #TODO handle extras e.g. 'extra': 'tcp dpt:7373 spt:34543'
         #TODO add validations
         #TODO handle wildcards
-        assert r.chain in RULE_CHAINS
         lcmd = []
         lcmd.append(r.chain)
         if r.prot != 'all':
@@ -258,41 +300,5 @@ class Iptables:
             log.error("Error code {} returned when called '{}'. Command output: '{}'".format(e.returncode, e.cmd, e.output))
             raise e
 
-    @staticmethod
-    def read_simple_rules(chain=None):
-        assert chain is None or chain in RULE_CHAINS
-        rules = []
-        ipt = Iptables.load()
-        # rfw originated rules may have only DROP/ACCEPT/REJECT targets and do not specify protocol and do not have extra args like ports
-        if chain == 'INPUT' or chain is None:
-            input_rules = ipt.find({'target': RULE_TARGETS, 'chain': ['INPUT'], 'destination': ['0.0.0.0/0'], 'out': ['*'], 'prot': ['all'], 'extra': ['']})
-            rules.extend(input_rules)
-        if chain == 'OUTPUT' or chain is None:
-            output_rules = ipt.find({'target': RULE_TARGETS, 'chain': ['OUTPUT'], 'source': ['0.0.0.0/0'], 'inp': ['*'], 'prot': ['all'], 'extra': ['']})
-            rules.extend(output_rules)
-        if chain == 'FORWARD' or chain is None:
-            forward_rules = ipt.find({'target': RULE_TARGETS, 'chain': ['FORWARD'], 'prot': ['all'], 'extra': ['']})
-            rules.extend(forward_rules)
-        return rules
 
     # find is a non-static method as it should be called after instantiation with Iptables.load()
-    def find(self, query):
-        """Find rules based on query
-        For example:
-            query = {'chain': ['INPUT', 'OUTPUT'], 'prot': ['all'], 'extra': ['']}
-            is searching for the rules where:
-            (chain == INPUT or chain == OUTPUT) and prot == all and extra == ''
-        """
-        ret = []
-        for r in self.rules:
-            matched_all = True    # be optimistic, if inner loop does not break, it means we matched all clauses
-            for param, vals in query.items():
-                rule_val = getattr(r, param)
-                if rule_val not in vals:
-                    matched_all = False
-                    break
-            if matched_all:
-                ret.append(r)
-        return ret
-
-
