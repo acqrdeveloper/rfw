@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 #
-# Copyrite (c) 2014 SecurityKISS Ltd (http://www.securitykiss.com)  
+# Copyrite (c) 2014 SecurityKISS Ltd (http://www.securitykiss.com)
+# (c) 2018 Alok G Singh
 #
 # This file is part of rfw
 #
@@ -28,25 +29,86 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import argparse
+from __future__ import print_function
+import argparse, pkg_resources, collections, os
+import client, iptables
+
+parser = argparse.ArgumentParser()
+subparsers = parser.add_subparsers(dest="subcommand")
+
+def subcommand(args=[], parent=subparsers):
+    """Decorator to add to functions.
+    See https://mike.depalatis.net/blog/simplifying-argparse.html
+    """
+    def decorator(func):
+        parser = parent.add_parser(func.__name__, description=func.__doc__)
+        for arg in args:
+            parser.add_argument(*arg[0], **arg[1])
+        parser.set_defaults(func=func)
+    return decorator
+
+def argument(*name_or_flags, **kwargs):
+    """Helper function to satisfy argparse.ArgumentParser.add_argument()'s
+    input argument syntax"""
+    return (list(name_or_flags), kwargs)
+
+def auth_from_env(user, passwd):
+    auth = collections.namedtuple('Auth', ['user','passwd'])
+    return auth(user=user or os.environ.get('RFW_USER'),
+                passwd=passwd or os.environ.get('RFW_PASS'))
 
 
+@subcommand([argument('op', help="Operation to perform.", choices=['add','rm']),
+             argument('chain', help="Chain the rule will be inserted into"),
+             argument('target', help="Target of the rule: DROP, REJECT, etc."),
+             argument('-p', '--proto', help="Protocol to use. Default is all."),
+             argument('-d', '--dport', help="Destination port"),
+             argument('-s', '--sport', help="Source port"),
+             argument('-i', '--input', help="Input interface"),
+             argument('-o', '--output', help="Output interface"),
+             argument('-sn', '--source', help="Source network"),
+             argument('-dn', '--dest', help="Destination network")])
+def rule(args, c):
+    r = iptables.Rule(args)
+    if args.op.upper() == 'ADD':
+        c.make_put(r)
+    else:
+        c.make_delete(r)
 
-def parse_commandline():
-    parser = argparse.ArgumentParser()
-    # TODO We may need to suppress interpreting -h and --help options. rfwc iptables -h will display rfwc help. Minor issue
-    # TODO capture all remaining args as a list
-    parser.add_argument('--wait', action='store_true', help='Wait until rfw server processes pending items in job queue. Used for making synchronous batch calls')
-    # user:password format as in curl
-    parser.add_argument('--user', help='user:password for basic authentication if rfw local.server requires it')
-    args = parser.parse_args()
-    return args
-
-def main():
-    args = parse_commandline()
-    print(args)
-
-
+@subcommand([argument('op', help="Operation to perform.", choices=['add','rm','list']),
+             argument('name', help="Chain name")])
+def chain(args, c):
+    ch = iptables.Chain(args.name)
+    if args.op.upper() == 'ADD':
+        c.make_put(ch)
+    elif args.op.upper() == 'RM':
+        c.make_delete(ch)
+    else:
+        c.make_get(ch)
+        
+#
+# Start here
 
 if __name__ == '__main__':
-    main()
+    # Try to obtain version
+    __version__ = '0.0.0'
+    try:
+        __version__ = pkg_resources.require("rfw")[0].version
+    except pkg_resources.DistributionNotFound:
+        v_file = os.path.join(os.path.dirname(__file__), '_version.py')
+        if os.path.isfile(v_file):
+            execfile(os.path.join(os.path.dirname(__file__), '_version.py'))
+
+    parser.add_argument('-v', '--version', action='version', version=__version__)
+    parser.add_argument('-d', '--debug', action='store_true', help='Show API traces')
+    parser.add_argument('-u', '--url', help='API endpoint. Uses environment variable RFW_API_URL if defined', default='http://localhost:7393/')
+    parser.add_argument('--user', help='Username for authentication. Uses environment variable RFW_USER if defined')
+    parser.add_argument('--passwd', help='Password for authentication. Uses environment variable RFW_PASS if defined')
+
+    args = parser.parse_args()
+    if args.subcommand is None:
+        parser.print_help()
+    else:
+        auth = auth_from_env(args.user, args.passwd)
+        c = client.Client(args.url, auth)
+        args.func(args, c)

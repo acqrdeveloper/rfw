@@ -45,7 +45,6 @@ from threading import Thread
 import config, rfwconfig, cmdparse, iputil, rfwthreads, iptables
 from sslserver import SSLServer, PlainServer, BasicAuthRequestHandler, CommonRequestHandler
 from iptables import Iptables, State
-
    
 log = logging.getLogger('rfw')
 

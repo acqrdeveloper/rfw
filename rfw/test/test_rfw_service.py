@@ -1,7 +1,7 @@
 from unittest import TestCase
 
-import cmdparse, timeutil, iptables, iputil
-from iptables import Rule
+from rfw import cmdparse, timeutil, iptables, iputil
+from rfw.iptables import Rule
 
 class CmdParseTest(TestCase):
 

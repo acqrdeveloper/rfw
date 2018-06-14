@@ -64,19 +64,12 @@ def read(*filenames, **kwargs):
 
 
 
-ver = '0.0.0'
-version_file = os.path.join(os.path.dirname(__file__), 'rfw', '_version.py')
-with open(version_file) as f:
-    verline = f.read().strip()
-    VSRE = r"^__version__ = ['\"]([^'\"]*)['\"]"
-    mo = re.search(VSRE, verline, re.M)
-    if mo:
-        ver = mo.group(1)
-
+__version__ = '0.0.0'
+execfile(os.path.join(os.path.dirname(__file__), 'rfw', '_version.py'))
 
 setup(
     name = "rfw",
-    version = ver,
+    version = __version__,
     author = "SecurityKISS Ltd",
     author_email = "open.source@securitykiss.com",
     description = ("Remote firewall as a web service. REST API for iptables."),
@@ -85,8 +78,10 @@ setup(
     url = "https://github.com/securitykiss-com/rfw",
     packages = ['rfw'],
     scripts = ['bin/rfw'],
+    test_suite = 'nose.collector',
+    tests_require = ['nose'],
     data_files = [  ('/etc/rfw', ['config/rfw.conf', 'config/white.list']), ('/etc/rfw/deploy', ['config/deploy/rfwgen', 'config/deploy/README.rst']), ('/etc/rfw/ssl', ['config/ssl/PUT_SERVER_KEYS_HERE'])],
-    long_description = read('README.rst', 'CHANGES.rst'),
+    long_description = read('README.rst', 'CHANGELOG.md'),
     cmdclass = {'install': post_install},
     classifiers=[
         "Development Status :: 4 - Beta",

@@ -103,8 +103,8 @@ ChainProto = namedtuple('Chain', ['name'])
 class Chain(ChainProto):
     """Value object to store iptables chain
     """
-    def __init__(self, name):
-        self.name = name
+    def __new__(cls, *args, **kwargs):
+        return ChainProto.__new__(cls, *args, **kwargs)
 
     def __eq__(self, other):
         """Chain equality is just on the basis of names
@@ -299,6 +299,3 @@ class Iptables:
         except subprocess.CalledProcessError, e:
             log.error("Error code {} returned when called '{}'. Command output: '{}'".format(e.returncode, e.cmd, e.output))
             raise e
-
-
-    # find is a non-static method as it should be called after instantiation with Iptables.load()
