@@ -30,7 +30,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 from __future__ import print_function
-import argparse, pkg_resources, collections, os
+import argparse, pkg_resources, os
 import client, iptables
 
 parser = argparse.ArgumentParser()
@@ -53,38 +53,44 @@ def argument(*name_or_flags, **kwargs):
     return (list(name_or_flags), kwargs)
 
 def auth_from_env(user, passwd):
-    auth = collections.namedtuple('Auth', ['user','passwd'])
-    return auth(user=user or os.environ.get('RFW_USER'),
-                passwd=passwd or os.environ.get('RFW_PASS'))
+    return (user or os.environ.get('RFW_USER'),
+            passwd or os.environ.get('RFW_PASS'))
 
 
 @subcommand([argument('op', help="Operation to perform.", choices=['add','rm']),
              argument('chain', help="Chain the rule will be inserted into"),
              argument('target', help="Target of the rule: DROP, REJECT, etc."),
-             argument('-p', '--proto', help="Protocol to use. Default is all."),
+             argument('-p', '--proto', help="Protocol to use. Default is all.", dest='prot', default='tcp'),
              argument('-d', '--dport', help="Destination port"),
              argument('-s', '--sport', help="Source port"),
-             argument('-i', '--input', help="Input interface"),
-             argument('-o', '--output', help="Output interface"),
-             argument('-sn', '--source', help="Source network"),
-             argument('-dn', '--dest', help="Destination network")])
+             argument('-i', '--input', help="Input interface", dest='inp', default='*'),
+             argument('-o', '--output', help="Output interface", dest='out', default='*'),
+             argument('-sn', '--source', help="Source network", default='0.0.0.0/0'),
+             argument('-dn', '--dest', help="Destination network", dest='destination', default='0.0.0.0/0')])
 def rule(args, c):
-    r = iptables.Rule(args)
+    """Take just the bits needed to create a rule from the args object
+    """
+    # Gets the __dict__ inside args
+    d = vars(args)
+    # Just take the bits we need from args to construct a Rule object
+    r0 = { k: d[k] for k in d if k in iptables.RULE_FIELDS }
+    r = iptables.Rule(r0)
+    print(r)
     if args.op.upper() == 'ADD':
-        c.make_put(r)
+        c.add_rule(r)
     else:
-        c.make_delete(r)
+        c.del_rule(r)
 
 @subcommand([argument('op', help="Operation to perform.", choices=['add','rm','list']),
              argument('name', help="Chain name")])
 def chain(args, c):
     ch = iptables.Chain(args.name)
     if args.op.upper() == 'ADD':
-        c.make_put(ch)
+        c.add_chain(ch)
     elif args.op.upper() == 'RM':
-        c.make_delete(ch)
+        c.del_chain(ch)
     else:
-        c.make_get(ch)
+        c.list_chain(ch)
         
 #
 # Start here
@@ -101,7 +107,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-v', '--version', action='version', version=__version__)
     parser.add_argument('-d', '--debug', action='store_true', help='Show API traces')
-    parser.add_argument('-u', '--url', help='API endpoint. Uses environment variable RFW_API_URL if defined', default='http://localhost:7393/')
+    parser.add_argument('-u', '--url', help='API endpoint. Uses environment variable RFW_API_URL if defined', default='http://localhost:7390')
     parser.add_argument('--user', help='Username for authentication. Uses environment variable RFW_USER if defined')
     parser.add_argument('--passwd', help='Password for authentication. Uses environment variable RFW_PASS if defined')
 

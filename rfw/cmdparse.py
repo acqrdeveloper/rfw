@@ -35,19 +35,6 @@ from iptables import Rule, Chain
 log = logging.getLogger("rfw.cmdparse")
 
 
-def convert_iface(iface):
-    """Convert iface string like 'any', 'eth', 'eth0' to iptables iface naming like *, eth+, eth0. 
-    """
-    if iface == 'any':
-        return '*'
-    else:
-        # append '+' quantifier to iface
-        if not iface[-1].isdigit():
-            iface += '+'
-        return iface
-
-
-
 class PathError(Exception):
     def __init__(self, path, msg=''):
         Exception.__init__(self, 'Incorrect path: {}. {}'.format(path, msg))
@@ -80,14 +67,14 @@ def parse_command_path(path, body):
     action = p[0]
 
     try:
-        if action.upper() in iptables.RULE_TARGETS:
-            return action, build_rule(p[1], body)
+        if action.upper() == 'RULE':
+            return action, build_rule(body)
         elif action.upper() == 'CHAIN':
             return action, build_chain(p[1], body)
     except ValueError, e:
         raise PathError(path, e.message)
     except IndexError:
-        raise PathError(path, "Missing chain")
+        raise PathError(path, "Missing chain name")
     
     if action == 'list':
         if len(p) == 1:
@@ -102,10 +89,9 @@ def parse_command_path(path, body):
 
 
 # From the path parts tuple build and return Rule for drop/accept/reject type of command
-def build_rule(chain, params):
+def build_rule(params):
 
     p = json.loads(params)
-    p.update({'chain': chain})
 
     return Rule(p)
 
@@ -148,8 +134,6 @@ def parse_command(url, body):
     """
     return dict with command elements like:
     {'chain': 'input', 'iface1': 'eth', 'ip1': '11.22.33.44', 'expire': '3600'}
-    chain == input implies that ip1 is a source address
-    chain == output implies that ip1 is a destination address
     """
     # split input to path and query
     # path specifies the iptables Rule while query provides additional rfw parameters like expire or wait

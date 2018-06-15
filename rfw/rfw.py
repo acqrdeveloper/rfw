@@ -97,6 +97,7 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue, state):
                     if chain:
                         rules = state.rule_chain(chain)
                         log.debug('Listing rules of {}'.format(chain))
+                        log.debug(rules)
                         output = map(iptables.Rule._asdict, rules)                    
                     else:
                         log.debug('Listing known chains')
@@ -117,13 +118,13 @@ def create_requesthandlers(rfwconf, cmd_queue, expiry_queue, state):
                     raise Exception('Unrecognized command. Non-restful disabled.')
 
             if modify in ['D', 'I']:
-                if action.upper() in iptables.RULE_TARGETS:
+                if action.upper() == 'RULE':
                     # eliminate ignored/whitelisted IP related commands early to prevent propagating them to expiry queue
-                    check_whitelist_conflict(rule.source, rfwconf.whitelist())
-                    check_whitelist_conflict(rule.destination, rfwconf.whitelist())
-                    log.debug('Added rule to Cmd Queue. Tuple: {}'.format(ctup))
+                    check_whitelist_conflict(obj.source, rfwconf.whitelist())
+                    check_whitelist_conflict(obj.destination, rfwconf.whitelist())
                     ctup = (modify, obj, directives)
                     cmd_queue.put_nowait(ctup)
+                    log.debug('Added rule to Cmd Queue. Tuple: {}'.format(ctup))
                 elif action.upper() == 'CHAIN':
                     ctup = (modify, obj, directives)
                     cmd_queue.put_nowait(ctup)
@@ -254,12 +255,12 @@ def rfw_init_rules(rfwconf, state):
     ###
     log.info('Delete existing init rules')
     # find 'drop all packets to and from rfw port'
-    drop_input = state.find({'target': ['DROP'], 'chain': ['INPUT'], 'prot': ['tcp'], 'extra': ['tcp dpt:' + rfw_port]})
+    drop_input = state.find({'target': ['DROP'], 'chain': ['INPUT'], 'prot': ['tcp'], 'dport': [rfw_port]})
     log.info(drop_input)
     log.info('Existing drop input to rfw port {} rules:\n{}'.format(rfw_port, '\n'.join(map(str, drop_input))))
     for r in drop_input:
         Iptables.exe_rule('D', r)
-    drop_output = state.find({'target': ['DROP'], 'chain': ['OUTPUT'], 'prot': ['tcp'], 'extra': ['tcp spt:' + rfw_port]})
+    drop_output = state.find({'target': ['DROP'], 'chain': ['OUTPUT'], 'prot': ['tcp'],  'sport': [rfw_port]})
     log.info('Existing drop output to rfw port {} rules:\n{}'.format(rfw_port, '\n'.join(map(str, drop_output))))
     for r in drop_output:
         Iptables.exe_rule('D', r)

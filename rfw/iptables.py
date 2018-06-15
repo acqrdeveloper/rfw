@@ -38,10 +38,10 @@ from threading import RLock
 log = logging.getLogger('lib.{}'.format(__name__))
 log.addHandler(logging.NullHandler())
 
-# note that the 'in' attribute from iptables output was renamed to 'inp' to avoid python keyword clash
-IPTABLES_HEADERS =         ['num', 'pkts', 'bytes', 'target', 'prot', 'opt', 'in', 'out', 'source', 'destination'] 
-RULE_ATTRS =      ['chain', 'num', 'pkts', 'bytes', 'target', 'prot', 'opt', 'inp', 'out', 'source', 'destination', 'extra']
-RULE_TARGETS =      set(['DROP', 'ACCEPT', 'REJECT', 'RETURN'])
+# Attributes when reading
+RULE_ATTRS = ['chain', 'num', 'pkts', 'bytes', 'target', 'prot', 'opt', 'inp', 'out', 'source', 'destination', 'sport', 'dport']
+# Attributes when creating
+RULE_FIELDS =  [ 'chain', 'target', 'prot', 'inp', 'out', 'source', 'destination', 'sport', 'dport' ]
 
 class State:
 
@@ -54,17 +54,17 @@ class State:
         return self.rules.keys()
 
     def rule_chain(self, chain):
-        return self.rules.get(chain)
+        return (self.rules.get(chain) or self.rules.get(chain.upper()) or [])
 
     def remove_chain(self, chain):
         assert chain in chains()
         del self.rules[chain]
 
     def remove_rule(self, chain, rule):
-        assert chain in chains()
-        assert rule in rules.get(chain)
+        assert chain in self.chains()
+        assert rule in self.rules.get(chain)
 
-        del self.rules[chain][rule]
+        self.rules[chain].remove(rule)
 
     def add_chain(self, chain):
         self.rules.setdefault(chain, set())
@@ -82,15 +82,16 @@ class State:
     def find(self, query):
         """Find rules based on query
         For example:
-            query = {'chain': ['INPUT', 'OUTPUT'], 'prot': ['all'], 'extra': ['']}
+            query = {'chain': ['INPUT', 'OUTPUT'], 'prot': ['all']}
             is searching for the rules where:
-            (chain == INPUT or chain == OUTPUT) and prot == all and extra == ''
+            (chain == INPUT or chain == OUTPUT) and prot == all
         """
         ret = set()
         for r in self.all_rules():
             matched_all = True    # be optimistic, if inner loop does not break, it means we matched all clauses
             for param, vals in query.items():
                 rule_val = getattr(r, param)
+                # print('Param: {}\tRule value: {}\tVals:{}'.format(param, rule_val, vals))
                 if rule_val not in vals:
                     matched_all = False
                     break
@@ -103,6 +104,7 @@ ChainProto = namedtuple('Chain', ['name'])
 class Chain(ChainProto):
     """Value object to store iptables chain
     """
+
     def __new__(cls, *args, **kwargs):
         return ChainProto.__new__(cls, *args, **kwargs)
 
@@ -125,6 +127,9 @@ class Chain(ChainProto):
         Iptables.exe(['-F', self.name])
         Iptables.exe(['-X', self.name])
         state.remove_chain(self.name)
+
+    def to_json(self):
+        return json.dumps({ 'name': self.name })
         
 
 RuleProto = namedtuple('Rule', RULE_ATTRS)
@@ -142,7 +147,7 @@ class Rule(RuleProto):
                 return RuleProto.__new__(_cls, *props)
             elif isinstance(props, dict):
                 # These defaults should agree with RULE_ATTRS above
-                d = {'chain': None, 'num': None, 'pkts': None, 'bytes': None, 'target': None, 'prot': 'all', 'opt': '--', 'inp': '*', 'out': '*', 'source': '0.0.0.0/0', 'destination': '0.0.0.0/0', 'extra': ''}
+                d = {'chain': None, 'num': None, 'pkts': None, 'bytes': None, 'target': None, 'prot': 'all', 'opt': '--', 'inp': '*', 'out': '*', 'source': '0.0.0.0/0', 'destination': '0.0.0.0/0', 'sport': None, 'dport': None}
                 d.update(props)
                 return RuleProto.__new__(_cls, **d)
             else:
@@ -161,17 +166,34 @@ class Rule(RuleProto):
         else:
             return False
 
+    def __hash__(self):
+        """Needed so that the in operator works when rules are in sets
+        """
+        return hash((self.chain,
+                     self.target,
+                     self.prot,
+                     self.opt,
+                     self.inp,
+                     self.out,
+                     self.source,
+                     self.destination))
+    
     def __ne__(self, other):
         return not self.__eq__(other)
 
     def create(self, state):
         Iptables.exe_rule('I', self)
-        state.add_rule(rule.chain, rule)
+        state.add_rule(self.chain, self)
 
     def delete(self, state):
         Iptables.exe_rule('D', self)
-        state.remove_rule(rule.chain, rule)
+        state.remove_rule(self.chain, self)
 
+    def to_json(self):
+        """Only returns the bits of a rule that are needed to create it. See rfwc.rule() for the CLI parsing variation
+        """
+        d = self._asdict()
+        return json.dumps({ k: d[k] for k in d if k in RULE_FIELDS })
 
 class Iptables:
 
@@ -180,6 +202,9 @@ class Iptables:
     lock = RLock()
     # store ipt_path as class variable, it's a system wide singleton anyway
     ipt_path = 'iptables'
+
+    # note that the 'in' attribute from iptables output was renamed to 'inp' to avoid python keyword clash
+    iptables_headers = ['num', 'pkts', 'bytes', 'target', 'prot', 'opt', 'in', 'out', 'source', 'destination'] 
 
     @staticmethod
     def verify_install():
@@ -212,10 +237,33 @@ class Iptables:
         """
         out = Iptables.exe(['-n', '-L', '-v', '-x', '--line-numbers'])
         #out = subprocess.check_output([Iptables.ipt_path, '-n', '-L', '-v', '-x', '--line-numbers'], stderr=subprocess.STDOUT)
+        return Iptables.parse_iptables(out)
+
+    @staticmethod
+    def parse_iptables(block):
+        # TODO Enhance to understand more output
+        def extras(e):
+             """Only understands source and destination ports in the iptables -L output. 
+             """
+             # l = len(e)
+             # print(e, l)
+             # if l < 1 and l > 2:
+             #     return [ None, None ]
+             try:
+                 t, p = e[1].split(':', 1)
+                 if t == 'dpt':
+                     return [ None, p ]
+                 elif t == 'spt':
+                     return [ p, None ]
+                 else:
+                     return [ None, None ]
+             except (ValueError, IndexError) as e:
+                 return [ None, None ]
+             
         rules = {}
         chain = None
         header = None
-        for line in out.split('\n'):
+        for line in block.split('\n'):
             line = line.strip()
             if not line:
                 chain = None  #on blank line reset current chain
@@ -226,20 +274,20 @@ class Iptables:
                 continue
             if "source" in line and "destination" in line:
                 # check if iptables output headers make sense 
-                assert line.split()  == IPTABLES_HEADERS
+                assert line.split()  == Iptables.iptables_headers
                 continue
             if chain:
                 columns = line.split()
                 if columns and columns[0].isdigit():
                     # join all extra columns into one extra field
-                    extra = " ".join(columns[10:])
+                    extra = extras(columns[10:])
                     columns = columns[:10]
-                    columns.append(extra)
+                    columns.extend(extra)
                     columns.insert(0, chain)
                     rule = Rule(columns)
                     rules.setdefault(chain, set()).add(rule)
         return rules
-        
+
     @staticmethod
     def rule_to_command(r):
         """Convert Rule object r to the list representing iptables command arguments like: 
@@ -255,18 +303,12 @@ class Iptables:
             lcmd.append('-p')
             lcmd.append(r.prot)
 
-        # TODO enhance. For now handle only source and destination port
-        if r.extra:
-            es = r.extra.split()
-            for e in es:
-                if e[:4] == 'dpt:':
-                    dport = e.split(':')[1]
-                    lcmd.append('--dport')
-                    lcmd.append(dport)
-                if e[:4] == 'spt:':
-                    sport = e.split(':')[1]
-                    lcmd.append('--sport')
-                    lcmd.append(sport)
+        if r.sport:
+            lcmd.append('--sport')
+            lcmd.append(r.sport)
+        if r.dport:
+            lcmd.append('--dport')
+            lcmd.append(r.dport)
 
         if r.destination != '0.0.0.0/0':
             lcmd.append('-d')

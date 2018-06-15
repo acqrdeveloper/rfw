@@ -44,6 +44,7 @@ class CommandProcessor(Thread):
         self.whitelist = whitelist
         self.expiry_queue = expiry_queue
         self.default_expire = default_expire
+        self.state = state
         self.setDaemon(True)
 
 
@@ -63,13 +64,15 @@ class CommandProcessor(Thread):
         while True:
             modify, obj, directives = self.cmd_queue.get()
             if isinstance(obj, iptables.Chain):
-                objset = state.chains()
+                objset = self.state.chains()
             elif isinstance(obj, iptables.Rule):
-                objset = state.rule_chain(obj.chain)
+                # TODO This is a list as the in operator has trouble
+                objset = self.state.rule_chain(obj.chain)
             else:
                 raise Exception("Do not know what to do with object {}".format(obj))
 
             try:
+                log.debug('Looking in {}'.format(objset))
                 obj_exists = obj in objset
                 log.debug('{} obj_exists: {}'.format(obj, obj_exists))
  
@@ -78,13 +81,13 @@ class CommandProcessor(Thread):
                     if obj_exists:
                         log.warn("Trying to insert an existing object: {}. Command ignored.".format(obj))
                     else:
-                        obj.create(state)
+                        obj.create(self.state)
                         # schedule expiry timeout if present. Only for Insert rules and only if the rule didn't exist before (so it was added now)
                         self.schedule_expiry(obj, directives)
                 elif modify == 'D':
                     if obj_exists:
                         #TODO delete rules in the loop to delete actual iptables duplicates. It's to satisfy idempotency and plays well with common sense
-                        obj.delete(state)
+                        obj.delete(self.state)
                     else:
                         log.warn("Trying to delete non-existent object: {}. Command ignored.".format(obj))
                 elif modify == 'L':

@@ -25,18 +25,47 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 from __future__ import print_function
-import requests, collections
+import requests
 
-class Client:
+class Client(object):
     def __init__(self, base_url, auth):
         self.base_url = base_url
-        self.auth = auth
+        self.auth = requests.auth.HTTPBasicAuth(auth[0], auth[1])
         
-    def make_put(self, obj):
-        print("Will create {} at {}".format(obj, self.base_url))
+    def _parse_response(self, r):
+        if r.status_code != 200:
+            raise Exception("Error in request to server: {}".format(r.text))
 
-    def make_delete(self, obj):
-        print("Will delete: {}".format(obj))
+        return r.text
+    
+    def _put(self, obj, url):
+        return self._parse_response(requests.put(url, data=obj.to_json(), auth=self.auth))
 
-    def make_get(self, obj):
-        print("Will list: {}".format(obj))
+    def _delete(self, obj, url):
+        return self._parse_response(requests.delete(url, data=obj.to_json(), auth=self.auth))
+
+    def _get(self, obj, url):
+        return self._parse_response(requests.get(url, auth=self.auth))
+
+    def add_rule(self, r):
+        self._put(r, '{burl}/rule'.format(burl=self.base_url,
+                                          target=r.target,
+                                          chain=r.chain))
+
+    def del_rule(self, r):
+        self._delete(r, '{burl}/rule'.format(burl=self.base_url,
+                                             target=r.target,
+                                             chain=r.chain))
+
+    def add_chain(self, c):
+        self._put(c, '{burl}/chain}'.format(burl=self.base_url,
+                                            chain=c.name))
+
+    def del_chain(self, c):
+        self._delete(c, '{burl}/chain/{chain}'.format(burl=self.base_url,
+                                                      chain=c.name))
+
+    def list_chain(self, c):
+        r = self._get(c, '{burl}/list/{chain}'.format(burl=self.base_url,
+                                                      chain=c.name))
+        print(r)
