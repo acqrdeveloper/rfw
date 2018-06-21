@@ -1,0 +1,13 @@
+Source: rfw
+Section: libs
+Priority: extra
+Maintainer: Alok G Singh <alephnull@hcoop.net>
+Build-Depends: debhelper (>= 11~), dh-python, python-all, python-setuptools
+
+Package: python-rfw
+Architecture: all
+Depends: ${python:Depends}, ${misc:Depends}
+Description: Remote firewall (Python 2)
+ This package provides the server and client bits of rfw
+ .
+ This package installs the library for Python 2.
