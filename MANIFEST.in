@@ -1,6 +1,5 @@
 include README*
-include CHANGES*
-include bin/*
+include CHANGELOG*
 include config/*
 include config/ssl/*
 include config/deploy/*

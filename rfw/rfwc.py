@@ -56,7 +56,6 @@ def auth_from_env(user, passwd):
     return (user or os.environ.get('RFW_USER'),
             passwd or os.environ.get('RFW_PASS'))
 
-
 @subcommand([argument('op', help="Operation to perform.", choices=['add','rm']),
              argument('chain', help="Chain the rule will be inserted into"),
              argument('target', help="Target of the rule: DROP, REJECT, etc."),
@@ -95,7 +94,7 @@ def chain(args, c):
 #
 # Start here
 
-if __name__ == '__main__':
+def main():
     # Try to obtain version
     __version__ = '0.0.0'
     try:
@@ -107,7 +106,7 @@ if __name__ == '__main__':
 
     parser.add_argument('-v', '--version', action='version', version=__version__)
     parser.add_argument('-d', '--debug', action='store_true', help='Show API traces')
-    parser.add_argument('-u', '--url', help='API endpoint. Uses environment variable RFW_API_URL if defined', default='http://localhost:7390')
+    parser.add_argument('-u', '--url', help='API endpoint.', default='http://localhost:7390')
     parser.add_argument('--user', help='Username for authentication. Uses environment variable RFW_USER if defined')
     parser.add_argument('--passwd', help='Password for authentication. Uses environment variable RFW_PASS if defined')
 
@@ -118,3 +117,6 @@ if __name__ == '__main__':
         auth = auth_from_env(args.user, args.passwd)
         c = client.Client(args.url, auth)
         args.func(args, c)
+
+if __name__ == '__main__':
+    main()

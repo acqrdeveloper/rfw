@@ -48,18 +48,14 @@ class Client(object):
         return self._parse_response(requests.get(url, auth=self.auth))
 
     def add_rule(self, r):
-        self._put(r, '{burl}/rule'.format(burl=self.base_url,
-                                          target=r.target,
-                                          chain=r.chain))
+        self._put(r, '{burl}/rule'.format(burl=self.base_url))
 
     def del_rule(self, r):
-        self._delete(r, '{burl}/rule'.format(burl=self.base_url,
-                                             target=r.target,
-                                             chain=r.chain))
+        self._delete(r, '{burl}/rule'.format(burl=self.base_url))
 
     def add_chain(self, c):
-        self._put(c, '{burl}/chain}'.format(burl=self.base_url,
-                                            chain=c.name))
+        self._put(c, '{burl}/chain/{chain}'.format(burl=self.base_url,
+                                                   chain=c.name))
 
     def del_chain(self, c):
         self._delete(c, '{burl}/chain/{chain}'.format(burl=self.base_url,

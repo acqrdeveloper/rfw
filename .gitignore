@@ -10,3 +10,4 @@ config/white.list
 config/deploy/client
 config/deploy/offline
 config/deploy/server_*
+build/

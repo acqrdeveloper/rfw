@@ -1,17 +1,21 @@
 from unittest import TestCase
 
 from rfw import cmdparse, timeutil, iptables, iputil
-from rfw.iptables import Rule, Iptables
+from rfw.iptables import Rule, Chain, Iptables
 
 class CmdParseTest(TestCase):
 
     def test_parse_command(self):
         self.assertEqual( 
-                cmdparse.parse_command_path('/drop/input/',
+                cmdparse.parse_command_path('/rule/',
                                             """{ "target": "DROP", "inp": "eth0", 
-                                            "source": "5.6.7.8",
+                                            "chain": "INPUT", "source": "5.6.7.8",
                                             "destination": "0.0.0.0/0"}"""), 
-            ('drop', Rule(chain='input', num=None, pkts=None, bytes=None, target='DROP', prot='all', opt='--', inp='eth0', out='*', source='5.6.7.8', destination='0.0.0.0/0', sport=None, dport=None)))
+            ('rule', Rule(chain='INPUT', num=None, pkts=None, bytes=None, target='DROP', prot='all', opt='--', inp='eth0', out='*', source='5.6.7.8', destination='0.0.0.0/0', sport=None, dport=None)))
+        self.assertEqual( 
+                cmdparse.parse_command_path('/chain/chain0',
+                                            """{ "name": "chain0" }"""), 
+            ('chain', Chain("chain0")))
 
 
 

@@ -70,18 +70,26 @@ execfile(os.path.join(os.path.dirname(__file__), 'rfw', '_version.py'))
 setup(
     name = "rfw",
     version = __version__,
-    author = "SecurityKISS Ltd",
-    author_email = "open.source@securitykiss.com",
+    author = "Alok G Singh",
+    author_email = "alephnull@hcoop.net",
     description = ("Remote firewall as a web service. REST API for iptables."),
     license = "MIT",
     keywords = "rfw remote firewall iptables REST web service drop accept ban allow whitelist fail2ban",
-    url = "https://github.com/securitykiss-com/rfw",
+    url = "https://github.com/alephnull/rfw",
+    install_requires = [ 'requests' ],
     packages = ['rfw'],
-    scripts = ['bin/rfw'],
+    entry_points = {
+        'console_scripts': [
+            'rfw = rfw.rfw:main',
+            'rfwc = rfw.rfwc:main'
+        ]
+    },
     test_suite = 'nose.collector',
     tests_require = ['nose'],
-    data_files = [  ('/etc/rfw', ['config/rfw.conf', 'config/white.list']), ('/etc/rfw/deploy', ['config/deploy/rfwgen', 'config/deploy/README.rst']), ('/etc/rfw/ssl', ['config/ssl/PUT_SERVER_KEYS_HERE'])],
-    long_description = read('README.rst', 'CHANGELOG.md'),
+    package_data = {
+        'rfw': 'config/*'
+    },
+    long_description = read('README.md', 'CHANGELOG.md'),
     cmdclass = {'install': post_install},
     classifiers=[
         "Development Status :: 4 - Beta",
